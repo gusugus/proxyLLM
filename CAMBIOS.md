@@ -1,3 +1,10 @@
+## [2026-05-04]
+### Implementación de Sistema RAG con ChromaDB
+
+- **`rag/index_rag.py`** (movido desde `rag/scripts/`): Script offline que carga los `.md` del directorio `rag/`, los divide en chunks por párrafo y los indexa en ChromaDB usando el modelo de embeddings `all-MiniLM-L6-v2`. Genera `rag/chroma_db/`.
+- **`services/rag_service.py`** (nuevo): Servicio de búsqueda semántica sobre ChromaDB. Inicializa el cliente una sola vez (singleton con caché). Expone `search(query, top_k)` y `get_context_for_prompt(query)` que devuelve el contexto ya formateado con marcadores `=== CONTEXTO DE CONOCIMIENTO (RAG) ===`.
+- **`services/rules.py`** (modificado): Integración del RAG sin romper la estructura del prompt existente. Se activa automáticamente si `materia` contiene "natural" o si el mensaje contiene términos biológicos. El contexto RAG se inyecta entre el bloque de preguntas fallidas y la conversación reciente en el modo tutor, y al inicio del prompt en el modo general.
+
 ## [2026-04-23]
 > [!IMPORTANT]
 > **REGLA CRÍTICA**: NO modificar la estructura de los prompts en `rules.py` sin petición explícita. El usuario está refinando la redacción manualmente.

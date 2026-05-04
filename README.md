@@ -5,6 +5,7 @@
 - **Generación automática de quizzes** en formato JSON a partir de contenido educativo.
 - **Tutoría personalizada** basada en las preguntas que el alumno respondió mal.
 - **Streaming en tiempo real** (SSE) de las respuestas del LLM al cliente.
+- **RAG semántico** — búsqueda vectorial sobre el currículo oficial para enriquecer los prompts con contexto preciso.
 
 ---
 
@@ -46,6 +47,7 @@
 └──────────────┘       └──────────────────┘       └─────────────────┘
                               │
                               ├── Inyección de reglas/prompts
+                              ├── RAG semántico (ChromaDB + embeddings)
                               ├── Gramática GBNF para JSON
                               ├── Guardado de quizzes a disco
                               └── Ejecución de automatización
@@ -55,6 +57,7 @@
 - **`routes/`** — Capa de presentación (endpoints HTTP)
 - **`services/`** — Capa de lógica de negocio
 - **`utils/`** — Utilidades transversales
+- **`rag/`** — Contenido educativo e índice vectorial
 
 ---
 
@@ -73,7 +76,8 @@ proxy/
 │   └── permission.py           # POST /permission — Permisos de herramientas
 │
 ├── services/                   # Capa de lógica de negocio
-│   ├── rules.py                # Inyección de prompts y modo tutor
+│   ├── rules.py                # Inyección de prompts, modo tutor + activación RAG
+│   ├── rag_service.py          # Búsqueda semántica sobre ChromaDB
 │   ├── chat_orchestrator.py    # Selección y ruteo al backend LLM
 │   ├── stream_handler.py       # Generador SSE y post-procesamiento
 │   ├── llamacpp_service.py     # Cliente HTTP para llama.cpp
@@ -86,13 +90,15 @@ proxy/
 ├── utils/
 │   └── logger.py               # Configuración de Loguru (por sesión)
 │
-├── rag/                        # Contenido educativo (RAG)
+├── rag/                        # Contenido educativo + base vectorial
 │   ├── 00_curriculo_gobierno_10mo_EGB.md
 │   ├── 01_libro_enriquecido.md
 │   ├── 01_unidad_1_clasificacion_seres_vivos.md
 │   ├── 02_unidad_2_reproduccion_celular.md
-│   ├── libroBachillerato.md
-│   └── imagenes/               # Recursos gráficos del contenido
+│   ├── tema1_preguntas_sin_responder.md
+│   ├── imagenes/               # Recursos gráficos del contenido
+│   ├── chroma_db/              # Base vectorial persistente (generada por index_rag.py)
+│   └── index_rag.py            # Script offline para indexar contenido en ChromaDB
 │
 ├── quizzes/                    # Quizzes generados (salida JSON)
 ├── logs/                       # Logs por sesión y de automatización
@@ -101,6 +107,7 @@ proxy/
 ├── agents_cpp.md               # Reglas del agente (modo llama.cpp)
 ├── json_quiz.gbnf              # Gramática GBNF para formato de quiz
 │
+├── INDICE.md                   # Mapa de todos los archivos del proyecto
 ├── CAMBIOS.md                  # Historial de cambios del proyecto
 └── RULES.md                    # Reglas de desarrollo para contribuidores
 ```
@@ -122,14 +129,16 @@ proxy/
 
 Definidas en `requirements.txt`:
 
-| Paquete            | Versión  | Descripción                                                   |
-|--------------------|----------|---------------------------------------------------------------|
-| `flask`            | 3.0.2    | Framework web para la API REST                                |
-| `flask-cors`       | 4.0.0    | Soporte CORS para peticiones del frontend                     |
-| `requests`         | 2.31.0   | Cliente HTTP para comunicarse con los backends LLM            |
-| `python-dotenv`    | 1.0.1    | Carga de variables desde `.env`                               |
-| `gunicorn`         | 21.2.0   | Servidor WSGI para producción (multi-worker)                  |
-| `loguru`           | 0.7.2    | Logging avanzado con rotación, colores y filtros por sesión   |
+| Paquete                   | Descripción                                                   |
+|---------------------------|---------------------------------------------------------------|
+| `flask`                   | Framework web para la API REST                                |
+| `flask-cors`              | Soporte CORS para peticiones del frontend                     |
+| `requests`                | Cliente HTTP para comunicarse con los backends LLM            |
+| `python-dotenv`           | Carga de variables desde `.env`                               |
+| `gunicorn`                | Servidor WSGI para producción (multi-worker)                  |
+| `loguru`                  | Logging avanzado con rotación, colores y filtros por sesión   |
+| `chromadb`                | Base vectorial persistente para el sistema RAG                |
+| `sentence-transformers`   | Modelo de embeddings (`all-MiniLM-L6-v2`) para indexar el RAG |
 
 ### Modelo LLM
 
@@ -156,7 +165,17 @@ source venv/bin/activate        # Linux/Mac
 pip install -r requirements.txt
 ```
 
-### 3. Configurar variables de entorno
+### 3. Indexar el contenido educativo (RAG)
+
+> Solo necesario la primera vez, o cuando se añadan nuevos archivos `.md` a `rag/`.
+
+```bash
+python rag/index_rag.py
+```
+
+Esto genera la carpeta `rag/chroma_db/` con los embeddings del contenido. El proxy leerá automáticamente esta base vectorial en tiempo de ejecución.
+
+### 4. Configurar variables de entorno
 
 Copiar y editar el archivo `.env`:
 
@@ -165,14 +184,14 @@ cp .env.example .env
 # Editar .env con tus rutas y configuración
 ```
 
-### 4. Iniciar el servidor de llama.cpp
+### 5. Iniciar el servidor de llama.cpp
 
 ```bash
 # Ejemplo con un modelo Qwen3
 ./llama-server -m modelo.gguf -c 4096 --port 8080
 ```
 
-### 5. Ejecutar el proxy
+### 6. Ejecutar el proxy
 
 ```bash
 # Desarrollo
@@ -272,17 +291,18 @@ Aprueba o deniega un permiso de herramienta del agente.
 
 ```
 1. Frontend envía: POST /chat/new { message: "5 preguntas sobre la célula" }
-2. rules.py → Inyecta reglas del agente (agents_cpp.md)
-3. chat_orchestrator.py → Detecta keywords "pregunta" → aplica gramática GBNF
-4. llamacpp_service.py → Envía prompt + gramática a llama.cpp
-5. stream_handler.py → Recibe SSE, acumula respuesta
-6. Al terminar (stop=true):
+2. rules.py → Detecta keyword biológica → consulta ChromaDB (RAG)
+3. rules.py → Inyecta contexto RAG + reglas del agente (agents_cpp.md)
+4. chat_orchestrator.py → Detecta keywords "pregunta" → aplica gramática GBNF
+5. llamacpp_service.py → Envía prompt enriquecido + gramática a llama.cpp
+6. stream_handler.py → Recibe SSE, acumula respuesta
+7. Al terminar (stop=true):
    a. persistence_service.py → Guarda JSON en /quizzes/
    b. automation_service.py → Ejecuta comando de subida
-7. Cliente recibe el quiz completo vía SSE
+8. Cliente recibe el quiz completo vía SSE
 ```
 
-### Flujo 2: Modo Tutor
+### Flujo 2: Modo Tutor con RAG
 
 ```
 1. Frontend envía: POST /chat/session123 {
@@ -291,9 +311,13 @@ Aprueba o deniega un permiso de herramienta del agente.
      preguntas: [{ question: "...", studentAnswer: "...", correctAnswer: "..." }],
      history: [...]
    }
-2. rules.py → Construye prompt de tutor con errores + historial
-3. LLM responde como profesor, explicando los errores
-4. Cliente recibe respuesta en streaming
+2. rules.py → Detecta materia "Ciencias Naturales" → busca en ChromaDB
+3. rules.py → Construye prompt tutor:
+     - Preguntas fallidas del alumno
+     - Contexto RAG relevante (=== CONTEXTO DE CONOCIMIENTO ===)
+     - Historial de conversación reciente
+4. LLM responde como profesor con base en el currículo real
+5. Cliente recibe respuesta en streaming
 ```
 
 ---
@@ -320,11 +344,18 @@ data_{tema}_{timestamp_unix}.json
 
 ---
 
-## 📚 Contenido RAG
+## 📚 Sistema RAG
 
-El directorio `rag/` contiene el material educativo de referencia, alineado con el **Currículo Oficial de Ecuador para 10mo año de EGB** en la materia de **Ciencias Naturales**. Este contenido sirve como base de conocimiento para la generación de quizzes y las respuestas del tutor.
+El directorio `rag/` contiene el material educativo de referencia, alineado con el **Currículo Oficial de Ecuador para 10mo año de EGB** en la materia de **Ciencias Naturales**.
 
-### Archivos disponibles:
+### Cómo funciona
+
+1. **Indexación offline** — `rag/index_rag.py` lee los `.md`, divide por párrafos y genera embeddings con `all-MiniLM-L6-v2`, almacenándolos en `rag/chroma_db/`.
+2. **Búsqueda en runtime** — `services/rag_service.py` conecta al ChromaDB ya indexado y ejecuta búsquedas semánticas (`top_k=2` por defecto).
+3. **Activación automática** — `services/rules.py` activa el RAG si la materia es Ciencias Naturales o si el mensaje contiene términos biológicos (`célula`, `bacteria`, `mitosis`, `evolución`, etc.).
+4. **Inyección en el prompt** — El contexto recuperado se inyecta con marcadores `=== CONTEXTO DE CONOCIMIENTO (RAG) ===` antes de que el LLM genere la respuesta.
+
+### Archivos de contenido:
 
 | Archivo                                          | Contenido                                         |
 |--------------------------------------------------|----------------------------------------------------|
@@ -332,7 +363,17 @@ El directorio `rag/` contiene el material educativo de referencia, alineado con 
 | `01_libro_enriquecido.md`                        | Resumen enriquecido del libro de texto             |
 | `01_unidad_1_clasificacion_seres_vivos.md`       | Unidad 1: Clasificación y taxonomía                |
 | `02_unidad_2_reproduccion_celular.md`            | Unidad 2: Reproducción celular                     |
-| `libroBachillerato.md`                           | Referencia de libro de bachillerato                |
+| `tema1_preguntas_sin_responder.md`               | Preguntas de repaso y actividades del Tema 1       |
+
+### Añadir nuevo contenido
+
+```bash
+# 1. Agregar el .md a rag/
+cp mi_nuevo_tema.md rag/
+
+# 2. Re-indexar (borra el índice anterior y lo regenera)
+python rag/index_rag.py
+```
 
 ---
 
@@ -356,4 +397,4 @@ El proyecto sigue reglas estrictas documentadas en `RULES.md`:
 
 ---
 
-> **Última actualización:** Mayo 2026
+> **Última actualización:** Mayo 2026 — Sistema RAG con ChromaDB integrado.
