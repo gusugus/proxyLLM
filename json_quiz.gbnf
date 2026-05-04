@@ -1,0 +1,8 @@
+# Gramática para forzar el formato exacto del quiz
+root ::= "{" ws "\"subject\"" ws ":" ws string ws "," ws "\"questions\"" ws ":" ws "[" ws question (ws "," ws question)* ws "]" ws "}"
+
+question ::= "{" ws "\"question\"" ws ":" ws string ws "," ws "\"answers\"" ws ":" ws "[" ws string (ws "," ws string)* ws "]" ws "," ws "\"solution\"" ws ":" ws number ws "," ws "\"cooldown\"" ws ":" ws number ws "," ws "\"time\"" ws ":" ws number ws "}"
+
+string ::= "\"" ([^\"]* | "\\\"")* "\""
+number ::= [0-9]+
+ws ::= [ \t\n]*

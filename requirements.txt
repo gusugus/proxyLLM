@@ -1,0 +1,13 @@
+flask==3.0.2
+requests==2.31.0
+flask-cors==4.0.0
+
+# opcionales pero recomendados
+python-dotenv==1.0.1
+gunicorn==21.2.0    #Gunicorn es lo que permite que tus aplicaciones web Python (Flask) 
+                    #manejen muchas solicitudes al mismo tiempo de manera eficiente.
+
+loguru==0.7.2       #Loguru es una librería de Python que facilita el registro (logging) de eventos en tu aplicación.
+
+sentence-transformers
+chromadb
