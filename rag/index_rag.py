@@ -9,7 +9,7 @@ from chromadb.utils import embedding_functions
 # Obtener directorio raíz del proyecto (proxy/)
 PROJECT_ROOT = Path(__file__).parent.parent  # scripts/ -> proxy/
 RAG_DIR = PROJECT_ROOT / "rag"
-CHROMA_PATH = PROJECT_ROOT / "chroma_db"
+CHROMA_PATH = RAG_DIR / "chroma_db"
 MODEL_NAME = "all-MiniLM-L6-v2"
 
 def chunk_text(content, min_len=50):
